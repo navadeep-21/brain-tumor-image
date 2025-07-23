@@ -1,0 +1,202 @@
+# Install required libraries
+!pip install opencv-python
+import zipfile, os, cv2
+import numpy as np
+from google.colab import files
+
+#  Step 1: Upload your ZIP (will open file picker)
+uploaded = files.upload()  # select the tumor_data 1.zip file manually
+
+#  Step 2: Extract the uploaded zip
+zip_file = next(iter(uploaded))  # get the uploaded file name
+extract_path = "/content/dataset"
+
+with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+    zip_ref.extractall(extract_path)
+
+#  Step 3: Define correct folder paths
+train_path = "/content/dataset/tumor_data/Brain tumor (Train)"
+valid_path = "/content/dataset/tumor_data/Brain tumor(Valid)"
+test_path  = "/content/dataset/tumor_data/Brain tumor (Test)"
+
+#  Step 4: Image loading function
+IMG_SIZE = 224
+
+def load_images_from_folder(folder_path):
+    X = []
+    y = []
+    class_names = [folder for folder in os.listdir(folder_path) if os.path.isdir(os.path.join(folder_path, folder))]
+
+    for label, class_name in enumerate(class_names):
+        class_folder = os.path.join(folder_path, class_name)
+        for image_name in os.listdir(class_folder):
+            image_path = os.path.join(class_folder, image_name)
+            try:
+                img = cv2.imread(image_path)
+                img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+                X.append(img)
+                y.append(label)
+            except:
+                continue
+
+    return np.array(X), np.array(y), class_names
+
+#  Step 5: Load datasets
+X_train, y_train, class_names = load_images_from_folder(train_path)
+X_val, y_val, _ = load_images_from_folder(valid_path)
+X_test, y_test, _ = load_images_from_folder(test_path)
+
+#  Step 6: Check loaded data
+print(" Loaded Successfully!")
+print("Tumor Classes:", class_names)
+print("Train Shape:", X_train.shape)
+print("Validation Shape:", X_val.shape)
+print("Test Shape:", X_test.shape)
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.utils import to_categorical
+from sklearn.preprocessing import LabelEncoder
+
+# Normalize pixel values
+X_train = X_train / 255.0
+X_val   = X_val / 255.0
+X_test  = X_test / 255.0
+
+# Encode labels to categorical
+encoder = LabelEncoder()
+y_train_encoded = to_categorical(encoder.fit_transform(y_train))
+y_val_encoded   = to_categorical(encoder.transform(y_val))
+y_test_encoded  = to_categorical(encoder.transform(y_test))
+
+# CNN Model
+model = Sequential([
+    Conv2D(32, (3, 3), activation='relu', input_shape=(224, 224, 3)),
+    MaxPooling2D((2, 2)),
+
+    Conv2D(64, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+
+    Conv2D(128, (3, 3), activation='relu'),
+    MaxPooling2D((2, 2)),
+
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dropout(0.5),
+    Dense(4, activation='softmax')  # 4 classes
+])
+
+model.compile(optimizer='adam',
+              loss='categorical_crossentropy',
+              metrics=['accuracy'])
+
+# Summary
+model.summary()
+
+# Train the model
+history = model.fit(
+    X_train, y_train_encoded,
+    epochs=10,
+    batch_size=32,
+    validation_data=(X_val, y_val_encoded)
+)
+import matplotlib.pyplot as plt
+
+# Plot accuracy
+plt.figure(figsize=(12, 5))
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'], label='Train Acc')
+plt.plot(history.history['val_accuracy'], label='Val Acc')
+plt.title("Accuracy over Epochs")
+plt.xlabel("Epoch")
+plt.ylabel("Accuracy")
+plt.legend()
+
+# Plot loss
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'], label='Train Loss')
+plt.plot(history.history['val_loss'], label='Val Loss')
+plt.title("Loss over Epochs")
+plt.xlabel("Epoch")
+plt.ylabel("Loss")
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+test_loss, test_acc = model.evaluate(X_test, y_test_encoded, verbose=0)
+print(f" Test Accuracy: {test_acc * 100:.2f}%")
+import random
+
+index = random.randint(0, len(X_test) - 1)
+sample_image = X_test[index]
+true_label = class_names[np.argmax(y_test_encoded[index])]
+
+prediction = model.predict(np.expand_dims(sample_image, axis=0))
+predicted_label = class_names[np.argmax(prediction)]
+
+plt.imshow(sample_image)
+plt.title(f"Actual: {true_label} | Predicted: {predicted_label}")
+plt.axis("off")
+plt.show()
+--streamlit--
+!pip install streamlit opencv-python-headless pyngrok --quiet
+model.save("brain_tumor_model.h5")
+# Clean install
+!pip install -q streamlit pyngrok
+from pyngrok import ngrok
+
+# Use your actual token
+ngrok.set_auth_token("30EpQHW8cRoFmOrdxvD1WWdnPlz_5N8AfE5FNGYxdpNKWY4CJ")
+%%writefile app.py
+import streamlit as st
+import numpy as np
+from PIL import Image
+
+st.set_page_config(page_title="Brain Tumor Detector", layout="centered")
+st.title(" Brain Tumor Detection App")
+
+uploaded_file = st.file_uploader("Upload an MRI Image", type=["jpg", "jpeg", "png"])
+
+if uploaded_file is not None:
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Uploaded MRI Scan", use_column_width=True)
+
+    img_resized = image.resize((224, 224))
+    img_array = np.array(img_resized) / 255.0
+    img_array = np.expand_dims(img_array, axis=0)
+
+    st.markdown(" **Prediction (Simulated):**")
+    st.success("Tumor Type: **Glioma**")  # Replace with model prediction later
+import os
+import threading
+import time
+
+# Run Streamlit in background
+def run_streamlit():
+    os.system('streamlit run app.py')
+
+threading.Thread(target=run_streamlit).start()
+time.sleep(5)  # Give it time to start
+
+# Start ngrok tunnel
+public_url = ngrok.connect(8501)
+print(" Web App running at:", public_url)
+THIS FINAL CELL TO LAUNCH YOUR WEB APP-
+import os
+import threading
+import time
+from pyngrok import ngrok
+
+# Ensure ngrok token is already set
+ngrok.set_auth_token("30EpQHW8cRoFmOrdxvD1WWdnPlz_5N8AfE5FNGYxdpNKWY4CJ")
+
+# Start Streamlit in a separate thread
+def run_streamlit():
+    os.system("streamlit run app.py")
+
+threading.Thread(target=run_streamlit).start()
+time.sleep(5)  # Allow Streamlit to boot
+
+# Create tunnel
+public_url = ngrok.connect(8501)
+print("Your Streamlit app is live at:", public_url)
